@@ -1,4 +1,3 @@
-
 const express = require('express');
 const { exec } = require('child_process');
 const fs = require('fs');
@@ -101,3 +100,23 @@ app.get('/api/download', limiter, (req, res) => {
       if (err || !fs.existsSync(outFile)) {
         return res.status(500).json({ error: 'Download failed. The video may be private.' });
       }
+
+      const ext = isAudio ? 'mp3' : 'mp4';
+      const mime = isAudio ? 'audio/mpeg' : 'video/mp4';
+      const filename = safeFilename(videoTitle, ext);
+
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Type', mime);
+
+      const stream = fs.createReadStream(outFile);
+      stream.pipe(res);
+      stream.on('end', () => fs.unlink(outFile, () => {}));
+      stream.on('error', () => res.status(500).end());
+    });
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`QuickReel API running on port ${PORT}`);
+});
