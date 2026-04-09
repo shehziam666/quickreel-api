@@ -4,7 +4,8 @@
   "description": "QuickReel backend API",
   "main": "api/download.js",
   "scripts": {
-    "start": "node api/download.js"
+    "start": "node api/download.js",
+    "postinstall": "python3 -m pip install yt-dlp --break-system-packages || python3 -m pip install yt-dlp || pip3 install yt-dlp || pip install yt-dlp || true"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -15,4 +16,3 @@
     "node": ">=18.0.0"
   }
 }
-
