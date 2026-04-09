@@ -5,7 +5,6 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 
@@ -24,6 +23,14 @@ function isValidUrl(url) {
     /youtu\.be\//
   ];
   return allowed.some(p => p.test(url));
+}
+
+function safeFilename(title, ext) {
+  const clean = (title || 'quickreel')
+    .replace(/[^a-zA-Z0-9\s\-_]/g, '')
+    .replace(/\s+/g, '_')
+    .substring(0, 60);
+  return `${clean || 'quickreel'}.${ext}`;
 }
 
 app.get('/', (req, res) => {
@@ -72,31 +79,24 @@ app.get('/api/download', limiter, (req, res) => {
   const tmpFile = `/tmp/qr_${Date.now()}`;
   const outFile = isAudio ? `${tmpFile}.mp3` : `${tmpFile}.mp4`;
 
-  let cmd;
-  if (isAudio) {
-    cmd = `yt-dlp -x --audio-format mp3 -o "${outFile}" "${url}"`;
-  } else {
-    cmd = `yt-dlp -f "${fmt}" --merge-output-format mp4 -o "${outFile}" "${url}"`;
-  }
-
-  exec(cmd, { timeout: 120000 }, (err) => {
-    if (err || !fs.existsSync(outFile)) {
-      return res.status(500).json({ error: 'Download failed. The video may be private.' });
+  // First get the title, then download
+  exec(`yt-dlp --dump-json --no-playlist "${url}"`, { timeout: 20000 }, (infoErr, infoStdout) => {
+    let videoTitle = 'quickreel';
+    if (!infoErr && infoStdout) {
+      try {
+        const info = JSON.parse(infoStdout);
+        videoTitle = info.title || 'quickreel';
+      } catch {}
     }
 
-    const ext = isAudio ? 'mp3' : 'mp4';
-    const mime = isAudio ? 'audio/mpeg' : 'video/mp4';
-    res.setHeader('Content-Disposition', `attachment; filename="quickreel.${ext}"`);
-    res.setHeader('Content-Type', mime);
+    let cmd;
+    if (isAudio) {
+      cmd = `yt-dlp -x --audio-format mp3 -o "${outFile}" "${url}"`;
+    } else {
+      cmd = `yt-dlp -f "${fmt}" --merge-output-format mp4 -o "${outFile}" "${url}"`;
+    }
 
-    const stream = fs.createReadStream(outFile);
-    stream.pipe(res);
-    stream.on('end', () => fs.unlink(outFile, () => {}));
-    stream.on('error', () => res.status(500).end());
-  });
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`QuickReel API running on port ${PORT}`);
-});
+    exec(cmd, { timeout: 120000 }, (err) => {
+      if (err || !fs.existsSync(outFile)) {
+        return res.status(500).json({ error: 'Download failed. The video may be private.' });
+      }
