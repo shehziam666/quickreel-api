@@ -1,11 +1,11 @@
 const express = require('express');
+const { exec } = require('child_process');
 const fs = require('fs');
-const path = require('path');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
-const youtubeDlExec = require('youtube-dl-exec');
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
@@ -30,66 +30,58 @@ app.get('/', (req, res) => {
   res.json({ status: 'QuickReel API is running' });
 });
 
-app.get('/api/info', limiter, async (req, res) => {
+app.get('/api/info', limiter, (req, res) => {
   const { url } = req.query;
   if (!url || !isValidUrl(url)) {
     return res.status(400).json({ error: 'Invalid or unsupported URL.' });
   }
 
-  try {
-    const data = await youtubeDlExec(url, {
-      dumpSingleJson: true,
-      noPlaylist: true,
-      noWarnings: true
-    });
-    res.json({
-      title: data.title || 'Video',
-      thumbnail: data.thumbnail,
-      duration: data.duration,
-      uploader: data.uploader || data.channel,
-      platform: data.extractor_key
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Could not fetch video info.', detail: err.message });
-  }
+  exec(`yt-dlp --dump-json --no-playlist "${url}"`, { timeout: 20000 }, (err, stdout, stderr) => {
+    if (err) return res.status(500).json({ error: 'Could not fetch video info.', detail: stderr });
+    try {
+      const data = JSON.parse(stdout);
+      res.json({
+        title: data.title || 'Video',
+        thumbnail: data.thumbnail,
+        duration: data.duration,
+        uploader: data.uploader || data.channel,
+        platform: data.extractor_key
+      });
+    } catch {
+      res.status(500).json({ error: 'Failed to parse video info.' });
+    }
+  });
 });
 
-app.get('/api/download', limiter, async (req, res) => {
+app.get('/api/download', limiter, (req, res) => {
   const { url, quality = 'HD' } = req.query;
 
   if (!url || !isValidUrl(url)) {
     return res.status(400).json({ error: 'Invalid or unsupported URL.' });
   }
 
+  const formats = {
+    'HD':        'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    '720p':      'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best',
+    '480p':      'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best',
+    'MP3 Audio': 'bestaudio'
+  };
+
   const isAudio = quality === 'MP3 Audio';
+  const fmt = isAudio ? formats['MP3 Audio'] : (formats[quality] || formats['HD']);
   const tmpFile = `/tmp/qr_${Date.now()}`;
   const outFile = isAudio ? `${tmpFile}.mp3` : `${tmpFile}.mp4`;
 
-  const formats = {
-    'HD':   'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-    '720p': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best',
-    '480p': 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best'
-  };
+  let cmd;
+  if (isAudio) {
+    cmd = `yt-dlp -x --audio-format mp3 -o "${outFile}" "${url}"`;
+  } else {
+    cmd = `yt-dlp -f "${fmt}" --merge-output-format mp4 -o "${outFile}" "${url}"`;
+  }
 
-  try {
-    if (isAudio) {
-      await youtubeDlExec(url, {
-        extractAudio: true,
-        audioFormat: 'mp3',
-        audioQuality: 0,
-        output: outFile
-      });
-    } else {
-      const fmt = formats[quality] || formats['HD'];
-      await youtubeDlExec(url, {
-        format: fmt,
-        mergeOutputFormat: 'mp4',
-        output: outFile
-      });
-    }
-
-    if (!fs.existsSync(outFile)) {
-      return res.status(500).json({ error: 'Download failed. File not found after download.' });
+  exec(cmd, { timeout: 120000 }, (err) => {
+    if (err || !fs.existsSync(outFile)) {
+      return res.status(500).json({ error: 'Download failed. The video may be private.' });
     }
 
     const ext = isAudio ? 'mp3' : 'mp4';
@@ -101,10 +93,7 @@ app.get('/api/download', limiter, async (req, res) => {
     stream.pipe(res);
     stream.on('end', () => fs.unlink(outFile, () => {}));
     stream.on('error', () => res.status(500).end());
-
-  } catch (err) {
-    res.status(500).json({ error: 'Download failed.', detail: err.message });
-  }
+  });
 });
 
 const PORT = process.env.PORT || 3000;
