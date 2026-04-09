@@ -1,34 +1,10 @@
 const express = require('express');
-const { exec, execSync } = require('child_process');
+const { exec } = require('child_process');
 const fs = require('fs');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 
 const app = express();
-
-// Install yt-dlp at startup if not present
-try {
-  execSync('yt-dlp --version', { stdio: 'ignore' });
-  console.log('yt-dlp already installed');
-} catch {
-  console.log('Installing yt-dlp...');
-  try {
-    execSync('pip3 install yt-dlp', { stdio: 'inherit' });
-    console.log('yt-dlp installed via pip3');
-  } catch {
-    try {
-      execSync('pip install yt-dlp', { stdio: 'inherit' });
-      console.log('yt-dlp installed via pip');
-    } catch {
-      try {
-        execSync('curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp', { stdio: 'inherit' });
-        console.log('yt-dlp installed via curl');
-      } catch (e) {
-        console.error('Failed to install yt-dlp:', e.message);
-      }
-    }
-  }
-}
 
 app.use(cors());
 app.use(express.json());
@@ -60,8 +36,8 @@ app.get('/api/info', limiter, (req, res) => {
     return res.status(400).json({ error: 'Invalid or unsupported URL.' });
   }
 
-  exec(`yt-dlp --dump-json --no-playlist "${url}"`, { timeout: 20000 }, (err, stdout) => {
-    if (err) return res.status(500).json({ error: 'Could not fetch video info.' });
+  exec(`yt-dlp --dump-json --no-playlist "${url}"`, { timeout: 20000 }, (err, stdout, stderr) => {
+    if (err) return res.status(500).json({ error: 'Could not fetch video info.', detail: stderr });
     try {
       const data = JSON.parse(stdout);
       res.json({
@@ -85,10 +61,10 @@ app.get('/api/download', limiter, (req, res) => {
   }
 
   const formats = {
-    'HD':          'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-    '720p':        'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best',
-    '480p':        'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best',
-    'MP3 Audio':   'bestaudio'
+    'HD':        'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    '720p':      'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best',
+    '480p':      'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best',
+    'MP3 Audio': 'bestaudio'
   };
 
   const isAudio = quality === 'MP3 Audio';
