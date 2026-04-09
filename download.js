@@ -1,62 +1,42 @@
-// api/download.js
-// Backend download handler using yt-dlp
-// Deploy this on a VPS (DigitalOcean, Render, Railway, etc.)
-// This file is the Express API. The frontend calls: GET /api/download?url=VIDEO_URL&quality=HD
-
 const express = require('express');
 const { exec } = require('child_process');
-const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 
 const app = express();
 
-// ===== RATE LIMITING =====
-// Prevents abuse. 20 downloads per IP per hour.
+app.use(cors());
+app.use(express.json());
+
 const limiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 20,
-  message: { error: 'Too many requests. Please try again in an hour.' }
+  message: { error: 'Too many requests. Please try again later.' }
 });
 
-// ===== MIDDLEWARE =====
-app.use(cors({ origin: 'https://quickreel.app' })); // your domain
-app.use(express.static(path.join(__dirname, '..')));
-app.use('/api/download', limiter);
-
-// ===== QUALITY MAP =====
-const qualityFormats = {
-  'HD':    'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
-  '720p':  'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',
-  '480p':  'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best',
-  'MP3':   'bestaudio[ext=m4a]/bestaudio'
-};
-
-// ===== VALIDATE URL =====
-function isValidVideoUrl(url) {
+function isValidUrl(url) {
   const allowed = [
-    /^https?:\/\/(www\.)?instagram\.com\/reel\//,
-    /^https?:\/\/(www\.)?instagram\.com\/p\//,
-    /^https?:\/\/(vm\.)?tiktok\.com\//,
-    /^https?:\/\/(www\.)?tiktok\.com\/@.+\/video\//,
-    /^https?:\/\/(www\.)?youtube\.com\/shorts\//,
-    /^https?:\/\/youtu\.be\//
+    /instagram\.com\/reel\//,
+    /instagram\.com\/p\//,
+    /tiktok\.com\//,
+    /youtube\.com\/shorts\//,
+    /youtu\.be\//
   ];
-  return allowed.some(pattern => pattern.test(url));
+  return allowed.some(p => p.test(url));
 }
 
-// ===== GET VIDEO INFO (no download) =====
-app.get('/api/info', async (req, res) => {
+app.get('/', (req, res) => {
+  res.json({ status: 'QuickReel API is running' });
+});
+
+app.get('/api/info', limiter, (req, res) => {
   const { url } = req.query;
-  if (!url || !isValidVideoUrl(url)) {
+  if (!url || !isValidUrl(url)) {
     return res.status(400).json({ error: 'Invalid or unsupported URL.' });
   }
 
-  const safeUrl = url.replace(/[^a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]/g, '');
-  const cmd = `yt-dlp --dump-json --no-playlist "${safeUrl}"`;
-
-  exec(cmd, { timeout: 15000 }, (err, stdout) => {
+  exec(`yt-dlp --dump-json --no-playlist "${url}"`, { timeout: 20000 }, (err, stdout) => {
     if (err) return res.status(500).json({ error: 'Could not fetch video info.' });
     try {
       const data = JSON.parse(stdout);
@@ -73,42 +53,50 @@ app.get('/api/info', async (req, res) => {
   });
 });
 
-// ===== DOWNLOAD ENDPOINT =====
-app.get('/api/download', async (req, res) => {
+app.get('/api/download', limiter, (req, res) => {
   const { url, quality = 'HD' } = req.query;
 
-  if (!url || !isValidVideoUrl(url)) {
+  if (!url || !isValidUrl(url)) {
     return res.status(400).json({ error: 'Invalid or unsupported URL.' });
   }
 
-  const format = qualityFormats[quality] || qualityFormats['HD'];
-  const isAudio = quality === 'MP3';
+  const formats = {
+    'HD':   'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    '720p': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best',
+    '480p': 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best',
+    'MP3':  'bestaudio'
+  };
+
+  const isAudio = quality === 'MP3 Audio';
+  const fmt = isAudio ? formats['MP3'] : (formats[quality] || formats['HD']);
   const tmpFile = `/tmp/qr_${Date.now()}`;
-  const outputFile = isAudio ? `${tmpFile}.mp3` : `${tmpFile}.mp4`;
+  const outFile = isAudio ? `${tmpFile}.mp3` : `${tmpFile}.mp4`;
 
   let cmd;
   if (isAudio) {
-    cmd = `yt-dlp -x --audio-format mp3 --audio-quality 0 -o "${outputFile}" "${url}"`;
+    cmd = `yt-dlp -x --audio-format mp3 -o "${outFile}" "${url}"`;
   } else {
-    cmd = `yt-dlp -f "${format}" --merge-output-format mp4 -o "${outputFile}" "${url}"`;
+    cmd = `yt-dlp -f "${fmt}" --merge-output-format mp4 -o "${outFile}" "${url}"`;
   }
 
-  exec(cmd, { timeout: 60000 }, (err) => {
-    if (err || !fs.existsSync(outputFile)) {
-      return res.status(500).json({ error: 'Download failed. The video may be private or unavailable.' });
+  exec(cmd, { timeout: 120000 }, (err) => {
+    if (err || !fs.existsSync(outFile)) {
+      return res.status(500).json({ error: 'Download failed. The video may be private.' });
     }
 
-    const mime = isAudio ? 'audio/mpeg' : 'video/mp4';
     const ext = isAudio ? 'mp3' : 'mp4';
-    res.setHeader('Content-Disposition', `attachment; filename="quickreel_${Date.now()}.${ext}"`);
+    const mime = isAudio ? 'audio/mpeg' : 'video/mp4';
+    res.setHeader('Content-Disposition', `attachment; filename="quickreel.${ext}"`);
     res.setHeader('Content-Type', mime);
 
-    const stream = fs.createReadStream(outputFile);
+    const stream = fs.createReadStream(outFile);
     stream.pipe(res);
-    stream.on('end', () => { fs.unlink(outputFile, () => {}); });
-    stream.on('error', () => { res.status(500).end(); });
+    stream.on('end', () => fs.unlink(outFile, () => {}));
+    stream.on('error', () => res.status(500).end());
   });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`QuickReel API running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`QuickReel API running on port ${PORT}`);
+});
