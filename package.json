@@ -4,13 +4,13 @@
   "description": "QuickReel backend API",
   "main": "api/download.js",
   "scripts": {
-    "start": "node api/download.js",
-    "postinstall": "python3 -m pip install yt-dlp --break-system-packages || python3 -m pip install yt-dlp || pip3 install yt-dlp || pip install yt-dlp || true"
+    "start": "node api/download.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.18.2",
-    "express-rate-limit": "^7.1.5"
+    "express-rate-limit": "^7.1.5",
+    "youtube-dl-exec": "^3.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
