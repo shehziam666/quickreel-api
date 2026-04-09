@@ -1,10 +1,34 @@
 const express = require('express');
-const { exec } = require('child_process');
+const { exec, execSync } = require('child_process');
 const fs = require('fs');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 
 const app = express();
+
+// Install yt-dlp at startup if not present
+try {
+  execSync('yt-dlp --version', { stdio: 'ignore' });
+  console.log('yt-dlp already installed');
+} catch {
+  console.log('Installing yt-dlp...');
+  try {
+    execSync('pip3 install yt-dlp', { stdio: 'inherit' });
+    console.log('yt-dlp installed via pip3');
+  } catch {
+    try {
+      execSync('pip install yt-dlp', { stdio: 'inherit' });
+      console.log('yt-dlp installed via pip');
+    } catch {
+      try {
+        execSync('curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp', { stdio: 'inherit' });
+        console.log('yt-dlp installed via curl');
+      } catch (e) {
+        console.error('Failed to install yt-dlp:', e.message);
+      }
+    }
+  }
+}
 
 app.use(cors());
 app.use(express.json());
@@ -61,14 +85,14 @@ app.get('/api/download', limiter, (req, res) => {
   }
 
   const formats = {
-    'HD':   'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-    '720p': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best',
-    '480p': 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best',
-    'MP3':  'bestaudio'
+    'HD':          'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    '720p':        'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best',
+    '480p':        'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best',
+    'MP3 Audio':   'bestaudio'
   };
 
   const isAudio = quality === 'MP3 Audio';
-  const fmt = isAudio ? formats['MP3'] : (formats[quality] || formats['HD']);
+  const fmt = isAudio ? formats['MP3 Audio'] : (formats[quality] || formats['HD']);
   const tmpFile = `/tmp/qr_${Date.now()}`;
   const outFile = isAudio ? `${tmpFile}.mp3` : `${tmpFile}.mp4`;
 
